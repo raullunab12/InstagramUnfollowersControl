@@ -40,7 +40,7 @@ function getCookie(name) {
 
 function afterUrlGenerator(nextCode) {
     const ds_user_id = getCookie('ds_user_id');
-    return `https://www.instagram.com/graphql/query/?query_hash=3dec7e2c57367ef3da3d987d89f9dbc8&variables={"id":"${ds_user_id}","include_reel":"true","fetch_mutual":"false","first":"24","after":"${nextCode}"}`;
+    return `https://www.instagram.com/graphql/query/?query_id=17851374694183129&variables={"id":"${ds_user_id}","include_reel":"true","fetch_mutual":"false","first":"24","after":"${nextCode}"}`;
 }
 
 function unfollowUserUrlGenerator(idToUnfollow) {
@@ -149,26 +149,34 @@ function renderResults() {
     });
 }
 
-async function run(shouldIncludeVerifiedAccounts) {
+async function run(shouldIncludeVerifiedAccounts, shouldCompareWithPreviousVersion) {
     getElementByClass('.run-scan').remove();
     getElementByClass('.include-verified-checkbox').disabled = true;
-    await getNonFollowersList(shouldIncludeVerifiedAccounts);
+    await getFollowersList(shouldIncludeVerifiedAccounts, shouldCompareWithPreviousVersion);
     getElementByClass('.copy-list').disabled = false;
+    getElementByClass('.save-for-later').disabled = false;
 }
 
 function renderOverlay() {
     let shouldIncludeVerifiedAccounts = true;
+    let shouldCompareWithPreviousVersion = true;
     document.body.innerHTML = `
         <main class='iu'>
             <div class='overlay'>
                 <header class='top-bar'>
-                    <div class='logo' onclick='location.reload()'>InstagramUnfollowers</div>
+                    <div class='logo' onclick='location.reload()'>InstagramFollowersControl</div>
                     <label class='flex align-center'>
                         <input type='checkbox' class='include-verified-checkbox' ${
                             shouldIncludeVerifiedAccounts ? 'checked' : ''
                         } /> Include verified
                     </label>
+                    <label class='flex align-center'>
+                        <input type='checkbox' class='compare-previous-version' ${
+                            shouldCompareWithPreviousVersion ? 'checked' : ''
+                        } /> Compare with previous
+                    </label>
                     <button class='copy-list' onclick='copyListToClipboard()' disabled>COPY LIST</button>
+                    <button class='save-for-later' onclick='saveForLater()' disabled>Save for later</button>
                     <button class='fs-large clr-red' onclick='unfollow()'>UNFOLLOW <span class='selected-user-count'>[0]</span></button>
                     <input type='checkbox' class='toggle-all-checkbox' onclick='toggleAllUsers(this.checked)' disabled />
                 </header>
@@ -177,7 +185,7 @@ function renderOverlay() {
                 <div class='results-container'></div>
 
                 <footer class='bottom-bar'>
-                    <div>Non-followers: <span class='nonfollower-count' /></div>
+                    <div>Followers Count: <span class='nonfollower-count' /></div>
                     <div class='sleeping-text'></div>
                     <div class="pagination">
                         <a onclick="previousPage()">❮</a>
@@ -191,14 +199,28 @@ function renderOverlay() {
                 </footer>
             </div>
         </main>`;
-    getElementByClass('.run-scan').addEventListener('click', () => run(shouldIncludeVerifiedAccounts));
+    getElementByClass('.run-scan').addEventListener('click', () =>
+        run(shouldIncludeVerifiedAccounts, shouldCompareWithPreviousVersion),
+    );
     getElementByClass('.include-verified-checkbox').addEventListener(
         'change',
         () => (shouldIncludeVerifiedAccounts = !shouldIncludeVerifiedAccounts),
     );
+    getElementByClass('.compare-previous-version').addEventListener(
+        'change',
+        () => (shouldCompareWithPreviousVersion = !shouldCompareWithPreviousVersion),
+    );
 }
 
-async function getNonFollowersList(shouldIncludeVerifiedAccounts = true) {
+async function getFollowersList(shouldIncludeVerifiedAccounts = true, shouldCompareWithPreviousVersion = true) {
+    let previousVersionList = [];
+    if (shouldCompareWithPreviousVersion) {
+        previousVersionList = getPreviousList();
+        if (previousVersionList.length == 0) {
+            alert('Previous list not found');
+        }
+    }
+
     if (isActiveProcess) {
         return;
     }
@@ -211,7 +233,7 @@ async function getNonFollowersList(shouldIncludeVerifiedAccounts = true) {
     isActiveProcess = true;
 
     const ds_user_id = getCookie('ds_user_id');
-    let url = `https://www.instagram.com/graphql/query/?query_hash=3dec7e2c57367ef3da3d987d89f9dbc8&variables={"id":"${ds_user_id}","include_reel":"true","fetch_mutual":"false","first":"24"}`;
+    let url = `https://www.instagram.com/graphql/query/?query_id=17851374694183129&variables={"id":"${ds_user_id}","include_reel":"true","fetch_mutual":"false","first":"24"}`;
 
     const elProgressbarBar = getElementByClass('.progressbar-bar');
     const elProgressbarText = getElementByClass('.progressbar-text');
@@ -228,18 +250,18 @@ async function getNonFollowersList(shouldIncludeVerifiedAccounts = true) {
         }
 
         if (totalFollowedUsersCount === -1) {
-            totalFollowedUsersCount = receivedData.data.user.edge_follow.count;
+            totalFollowedUsersCount = receivedData.data.user.edge_followed_by.count;
         }
 
-        hasNext = receivedData.data.user.edge_follow.page_info.has_next_page;
-        url = afterUrlGenerator(receivedData.data.user.edge_follow.page_info.end_cursor);
-        currentFollowedUsersCount += receivedData.data.user.edge_follow.edges.length;
+        hasNext = receivedData.data.user.edge_followed_by.page_info.has_next_page;
+        url = afterUrlGenerator(receivedData.data.user.edge_followed_by.page_info.end_cursor);
+        currentFollowedUsersCount += receivedData.data.user.edge_followed_by.edges.length;
 
-        receivedData.data.user.edge_follow.edges.forEach(x => {
+        receivedData.data.user.edge_followed_by.edges.forEach(x => {
             if (!shouldIncludeVerifiedAccounts && x.node.is_verified) {
                 return;
             }
-            if (!x.node.follows_viewer) {
+            if (!previousVersionList.includes(x.node.id)) {
                 list.push(x.node);
             }
         });
@@ -265,6 +287,11 @@ async function getNonFollowersList(shouldIncludeVerifiedAccounts = true) {
     elProgressbarText.innerHTML = 'DONE';
 
     isActiveProcess = false;
+
+    if (list.length == 0) {
+        alert('No one was unfollowed you');
+    }
+
     return list;
 }
 
@@ -377,6 +404,18 @@ function previousPage() {
         currentPage--;
         renderResults();
     }
+}
+
+function saveForLater() {
+    const ds_user_id = getCookie('ds_user_id');
+    localStorage.setItem(`followers-${ds_user_id}`, JSON.stringify(nonFollowersList.map(user => user.id)));
+    alert('List saved for later!');
+}
+
+function getPreviousList() {
+    const ds_user_id = getCookie('ds_user_id');
+    const data = localStorage.getItem(`followers-${ds_user_id}`);
+    return JSON.parse(data ? data : '[]');
 }
 
 init();
